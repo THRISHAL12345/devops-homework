@@ -11,12 +11,12 @@ the commands, their real captured output, and screenshots.
 
 Sessions 09–12 (Kubernetes) were run against a live **2-node minikube cluster**
 (Kubernetes v1.37.0, containerd 2.3.4). See
-[Kubernetes sessions](#kubernetes-sessions-0912) below.
+[Sessions 09–20](#sessions-0920--kubernetes-cicd-iac-and-gitops) below.
 
 Linux-only tasks (`adduser`, `useradd`, `journalctl`) were executed inside an
 Ubuntu 22.04 container running systemd as PID 1, because macOS provides
 neither systemd nor those utilities. The image definition is in
-[`01-linux/lab-environment/Dockerfile`](./01-linux/lab-environment/Dockerfile).
+`[`01-linux/lab-environment/Dockerfile`](./01-linux/lab-environment/Dockerfile)`.
 
 ## Index
 
@@ -33,14 +33,22 @@ neither systemd nor those utilities. The image definition is in
 | 10 | Core Objects & Strategies | [`session10-k8s-core-objects/`](./session10-k8s-core-objects) | pods · probes · ReplicaSet/StatefulSet/DaemonSet · rolling · blue-green · canary · recreate |
 | 11 | Services, DNS & Identity | [`session-11-kubernetes-services/`](./session-11-kubernetes-services) | ClusterIP · NodePort · LoadBalancer · ExternalName · headless · CoreDNS/ndots |
 | 12 | Ingress, ConfigMaps & Secrets | [`session-12-ingress-configmaps-secrets/`](./session-12-ingress-configmaps-secrets) | ConfigMaps · Secrets · path/host routing · TLS termination |
+| 13 | Storage, HPA & Probes | [`session-13-storage-hpa-probes/`](./session-13-storage-hpa-probes) | volumes · PV/PVC · StorageClass · HPA autoscaling · probes |
+| 14 | Troubleshooting | [`session-14-kubernetes-troubleshooting/`](./session-14-kubernetes-troubleshooting) | 8 triage commands · 5-scenario gauntlet · service/DNS debugging |
+| 15 | Helm | [`session-15-helm/`](./session-15-helm) | chart authoring · install/upgrade/rollback · one chart, two environments |
+| 16 | CI/CD & GitHub Actions | [`session-16-github-actions/`](./session-16-github-actions) | CI pipeline · CD pipeline · Docker build · artifacts |
+| 17 | DevSecOps | [`session-17-devsecops/`](./session-17-devsecops) | SAST · SCA · secret scanning · image scanning · security gate · ghcr.io · k8s deploy |
+| 18 | Terraform & IaC | [`session18-terraform-iac/`](./session18-terraform-iac) | S3 project on LocalStack · drift detection · IAM/EC2/S3/VPC/DynamoDB+RDS write-ups |
+| 19 | Cloud & Terraform in Action | [`session19-cloud-terraform/`](./session19-cloud-terraform) | 21-resource VPC/subnets/SG/EC2/S3 stack · dependencies · verified via AWS CLI |
+| 20 | Monitoring, Observability & GitOps | [`session20-monitoring-observability-gitops/`](./session20-monitoring-observability-gitops) | Prometheus · Grafana · firing alerts · three pillars · Argo CD self-heal |
 
-## Kubernetes sessions (09–12)
+## Sessions 09–20 — Kubernetes, CI/CD, IaC and GitOps
 
 | | |
 |---|---|
 | Cluster | `minikube start --nodes=2 --driver=docker` — **2 nodes**, Kubernetes v1.37.0, containerd 2.3.4 |
 | Manifests | 60 YAML files, every one validated with `kubectl apply --dry-run=server` |
-| Evidence | 41 transcripts in each session's `logs/`, 41 rendered screenshots in `screenshots/` |
+| Evidence | 41 transcripts in each session's [`logs/`](./logs), 41 rendered screenshots in `screenshots/` |
 | Addons | `ingress` (ingress-nginx v1.15.1), `metallb` (stands in for a cloud LB controller) |
 
 Two nodes rather than one because several exercises are meaningless on a single
@@ -53,7 +61,7 @@ The assignment asks for terminal screenshots. There is no interactive terminal
 session to photograph here, so each PNG in `screenshots/` is **rendered from the
 matching `.txt` transcript** by [`_tools/render-terminal.py`](./_tools/render-terminal.py).
 The output is genuine captured output; only the presentation is generated, and
-nothing is truncated. **The `.txt` logs in each `logs/` folder are the primary
+nothing is truncated. **The `.txt` logs in each [`logs/`](./logs) folder are the primary
 evidence** and every README links them alongside the image.
 
 ### Environment deviations
@@ -90,14 +98,59 @@ minikube addons enable ingress
 # then follow the "Reproducing" section in each session README
 ```
 
-### Cluster state as delivered
+### A second change made outside this folder
 
-Every workload created by these sessions has been deleted — the `default`
-namespace is empty apart from the built-in `kubernetes` Service. The cluster
-itself is left **running** so the work can be re-verified; the `ingress` and
-`metallb` addons remain enabled.
+While producing Session 16, a `docker build --no-cache` was piped through the
+logging helper. BuildKit's default renderer emits continuous progress frames, and
+the capture grew to **29 GB**, filling the data volume. Docker's VM hit `ENOSPC`,
+its ext4 journal aborted, the VM filesystem went read-only, and Docker Desktop
+then refused to start with *"Docker Desktop cannot continue because the disk is
+full."*
+
+With explicit authorisation, the fix was to delete Docker's disk image:
 
 ```bash
+~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw   # was holding 353 GB
+```
+
+Docker Desktop recreated a clean one on next launch and came up in 10 seconds.
+
+**What this cost:** all locally cached Docker images, any stopped containers and
+volumes, and the previous minikube cluster. All were rebuildable and were rebuilt
+(`minikube start --nodes=2`). **What it reclaimed:** 353 GB — free space went from
+100 GB to 453 GB.
+
+**What prevents a repeat:** builds are now captured with `--progress=plain`, which
+produced the same information in **3,966 bytes** instead of 29 GB, and
+`.gitignore` blocks `**/logs/*-local-build.txt` outright.
+
+### Cluster state as delivered
+
+The 2-node cluster is left **running** so the work can be re-verified. Addons
+enabled: `ingress`, `metallb`, `metrics-server`.
+
+**Still deployed from Session 20** (deliberately, so the GitOps demo stays live):
+
+| Namespace | Contents |
+|---|---|
+| `argocd` | Argo CD, syncing `session20-monitoring-observability-gitops/gitops-app` from this repo with `selfHeal: true` and `prune: true` |
+| `monitoring` | Prometheus + Grafana, with the alert rules firing |
+| `session20` | the application Argo CD manages |
+
+> **Argo CD is an active agent.** While it runs, any commit touching
+> `gitops-app/` auto-deploys, and manual changes to that app are reverted within
+> ~20s. The repo-server also has
+> `ARGOCD_REPO_SERVER_ALLOW_OUT_OF_BOUNDS_SYMLINKS=true` set (see Session 20).
+
+A LocalStack container (Sessions 18–19) is also still running on `:4566`.
+
+```bash
+# tear down just the Session 20 workloads, leaving the cluster
+kubectl delete application -n argocd session20-mini
+kubectl delete namespace argocd monitoring session20
+docker rm -f localstack
+
+# or the whole cluster
 minikube stop      # power the nodes off, keep the cluster and its images
 minikube delete    # remove the cluster entirely
 ```
@@ -135,18 +188,18 @@ Note that `docker compose up` and the individually-named containers cannot run a
 the same time — they publish the same host ports and would collide. The compose
 file is shipped as a convenience for rebuilding all six apps in one command.
 
-## Raw evidence
+## Raw evidence (Sessions 01-07)
 
-[`logs/`](./logs) contains the complete unedited transcript of every command run,
-one file per phase, produced by [`_tools/run.sh`](./_tools/run.sh) at the moment
+`[`logs/`](./logs)` contains the complete unedited transcript of every command run,
+one file per phase, produced by `[`_tools/run.sh`](./_tools/run.sh)` at the moment
 each command ran. Nothing in any README was written from memory.
 
-[`logs/ISSUES.md`](./logs/ISSUES.md) records everything that did not work first
+`[`logs/ISSUES.md`](./logs/ISSUES.md)` records everything that did not work first
 time and how it was handled — including a missing Docker installation, an occupied
 port, and a real intermittent DNS fault on the host network.
 
-[`_tools/verify.sh`](./_tools/verify.sh) is the automated acceptance checker; its
-output is saved to [`logs/99-acceptance.log`](./logs/99-acceptance.log).
+`[`_tools/verify.sh`](./_tools/verify.sh)` is the automated acceptance checker; its
+output is saved to `[`logs/99-acceptance.log`](./logs/99-acceptance.log)`.
 
 ## Acceptance results
 
@@ -155,22 +208,22 @@ teardown so the results reflect the folder as delivered:
 
 | Checker | Result |
 |---|---|
-| [`_tools/verify.sh`](./_tools/verify.sh) — the playbook's Section 10.2 checker | **57 passed, 0 failed — ACCEPTANCE: PASS** |
-| [`_tools/appendix-c.sh`](./_tools/appendix-c.sh) — every Appendix C criterion | **110 passed, 0 failed — APPENDIX C: PASS** |
+| `[`_tools/verify.sh`](./_tools/verify.sh)` — the playbook's Section 10.2 checker | **57 passed, 0 failed — ACCEPTANCE: PASS** |
+| `[`_tools/appendix-c.sh`](./_tools/appendix-c.sh)` — every Appendix C criterion | **110 passed, 0 failed — APPENDIX C: PASS** |
 
-Their output is saved to [`logs/99-acceptance.log`](./logs/99-acceptance.log) and
-[`logs/99-appendix-c.log`](./logs/99-appendix-c.log). Both checkers assert against
+Their output is saved to `[`logs/99-acceptance.log`](./logs/99-acceptance.log)` and
+`[`logs/99-appendix-c.log`](./logs/99-appendix-c.log)`. Both checkers assert against
 the log files and the filesystem rather than against recollection — every claim in
 every README was cross-checked against the raw transcript that produced it.
 
 ## Docker cleanup
 
 Every container, image, network and volume created by this run was removed by
-exact name — see [`logs/98-teardown.log`](./logs/98-teardown.log). No blanket
+exact name — see `[`logs/98-teardown.log`](./logs/98-teardown.log)`. No blanket
 `docker system prune`, `docker rmi $(docker images -q)` or similar was ever used.
 
 The state before the run was captured in
-[`logs/00-docker-baseline.log`](./logs/00-docker-baseline.log) and the state after
+`[`logs/00-docker-baseline.log`](./logs/00-docker-baseline.log)` and the state after
 teardown matches it exactly: **0 containers, 0 volumes, and only the three default
 networks** (`bridge`, `host`, `none`).
 
@@ -226,19 +279,19 @@ Rosetta is unavailable; every image used here is multi-architecture and runs
 natively on `aarch64`.
 
 The full diagnosis, with the log evidence that identified it, is Issue 4 in
-[`logs/ISSUES.md`](./logs/ISSUES.md). The Appendix C checker reports this
+`[`logs/ISSUES.md`](./logs/ISSUES.md)`. The Appendix C checker reports this
 deviation explicitly rather than omitting it.
 
 ## A note on Git
 
-This folder is deliberately **not** a Git repository. It contains no `.git`
-directory, no `.gitignore` and no repository scaffolding of any kind, so that it
-can be added to a repository of your own choosing without becoming a broken
-nested repository or an accidental submodule.
+This folder **is** a Git repository, published at
+<https://github.com/thrishaldoma/devops-homework>. It was deliberately kept
+un-versioned while Sessions 01-12 were produced; Session 16 requires real GitHub
+Actions runs, so the work is now tracked and pushed.
 
 The Git tasks in Part 04 do require a real repository. That work was done in a
 disposable sandbox under `/tmp/git-sandbox`, captured as plain text into
-[`04-git-github/transcript.txt`](./04-git-github/transcript.txt), and the sandbox
+`[`04-git-github/transcript.txt`](./04-git-github/transcript.txt)`, and the sandbox
 was then deleted. Repository-local `git config` was used throughout, so the
 machine's global Git identity was never modified.
 

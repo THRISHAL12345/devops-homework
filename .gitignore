@@ -1,0 +1,21 @@
+# OS / editor noise
+.DS_Store
+
+# Python / build output
+__pycache__/
+*.pyc
+build/
+
+# Terraform local state (never commit state or lock files from a laptop run)
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Secret material - a private key must never be committed, even a throwaway one
+tls.key
+tls.crt
+*.pem
+
+# Guard: raw build-progress logs. A `docker build --no-cache` once wrote a 29GB
+# file through the capture helper; never let BuildKit progress reach a log file.
+**/logs/*-local-build.txt
